@@ -1,0 +1,290 @@
+# =============================================================================
+# build-push.yml — CI: build Docker images and push to ECR
+#
+# Triggered: push to master when spring-petclinic-microservices/** changes
+#            workflow_dispatch for manual/selective builds
+#
+# Jobs:
+#   1. detect      — which services changed (or parse dispatch input)
+#   2. build       — Maven build → docker buildx linux/arm64 → ECR push (matrix)
+#   3. update-tags — yq update helm-values → git commit → ArgoCD auto-syncs dev
+#
+# Required secrets:
+#   AWS_ROLE_ARN — ECR push role (terraform output: iam_github_actions_role_arn)
+#
+# GitOps loop:
+#   push → this workflow → ECR → helm-values commit → ArgoCD sync → EKS rolling update
+# =============================================================================
+
+name: Build and Push
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'spring-petclinic-microservices/**'
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Comma-separated service names or "all"'
+        required: false
+        default: 'all'
+
+permissions:
+  id-token: write   # OIDC token for AWS auth
+  contents: write   # push helm-values tag update commit
+
+env:
+  AWS_REGION:    us-east-1
+  ECR_REGISTRY:  482352877891.dkr.ecr.us-east-1.amazonaws.com
+  ECR_NAMESPACE: petclinic-dev
+  JAVA_VERSION:  '17'
+
+jobs:
+
+  # ===========================================================================
+  # detect
+  # push event  → diff HEAD~1..HEAD inside submodule to find changed services
+  # dispatch    → parse comma input or return all 8 services
+  # Output: JSON array e.g. ["api-gateway","vets-service"]
+  # ===========================================================================
+  detect:
+    name: Detect services to build
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.resolve.outputs.services }}
+      tag:      ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout (with submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Set image tag (SHA-7)
+        id: tag
+        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Resolve services list
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ github.event.inputs.services }}
+        run: |
+          ALL='["admin-server","api-gateway","config-server","customers-service","discovery-server","genai-service","vets-service","visits-service"]'
+
+          if [[ "${EVENT}" == "workflow_dispatch" ]]; then
+            if [[ -z "${INPUT}" || "${INPUT}" == "all" ]]; then
+              echo "services=${ALL}" >> $GITHUB_OUTPUT
+            else
+              JSON=$(echo "${INPUT}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -sc .)
+              echo "services=${JSON}" >> $GITHUB_OUTPUT
+            fi
+            exit 0
+          fi
+
+          # push event — find changed service dirs in the submodule
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- spring-petclinic-microservices/ \
+            | grep -oP 'spring-petclinic-microservices/spring-petclinic-\K[^/]+' \
+            | sort -u)
+
+          if [[ -z "${CHANGED}" ]]; then
+            echo "No service directories changed — skipping build"
+            echo "services=[]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          JSON=$(echo "${CHANGED}" | jq -R . | jq -sc .)
+          echo "services=${JSON}" >> $GITHUB_OUTPUT
+          echo "Detected: ${JSON}"
+
+  # ===========================================================================
+  # build
+  # Matrix over detected services. Per job:
+  #   Maven build → locate JAR → docker buildx linux/arm64 → ECR push
+  # fail-fast: false so one failure does not cancel sibling service builds
+  # ===========================================================================
+  build:
+    name: Build → ${{ matrix.service }}
+    needs: detect
+    if: needs.detect.outputs.services != '[]'
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect.outputs.services) }}
+      fail-fast: false
+
+    steps:
+      - name: Checkout (with submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: build-${{ matrix.service }}-${{ github.run_id }}
+
+      - name: Log in to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      - name: Set up QEMU (ARM64 cross-compilation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Maven build — ${{ matrix.service }}
+        working-directory: spring-petclinic-microservices
+        run: |
+          ./mvnw clean package \
+            --pl spring-petclinic-${{ matrix.service }} \
+            --also-make \
+            -DskipTests \
+            --no-transfer-progress \
+            --batch-mode
+
+      - name: Resolve JAR and port
+        id: meta
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          JAR=$(find spring-petclinic-microservices/spring-petclinic-${SERVICE}/target \
+            -name "*.jar" ! -name "*-sources.jar" | head -1)
+
+          if [[ -z "${JAR}" ]]; then
+            echo "::error::JAR not found for ${SERVICE}"
+            exit 1
+          fi
+
+          # ARTIFACT_NAME is relative to build context (spring-petclinic-microservices/)
+          # Dockerfile: COPY ${ARTIFACT_NAME}.jar application.jar
+          REL="${JAR#spring-petclinic-microservices/}"
+          echo "artifact_name=${REL%.jar}" >> $GITHUB_OUTPUT
+          echo "JAR: ${JAR}"
+
+          declare -A PORTS=(
+            [admin-server]=9090
+            [api-gateway]=8080
+            [config-server]=8888
+            [customers-service]=8081
+            [discovery-server]=8761
+            [genai-service]=8084
+            [vets-service]=8083
+            [visits-service]=8082
+          )
+          PORT="${PORTS[${SERVICE}]:-8080}"
+          echo "port=${PORT}" >> $GITHUB_OUTPUT
+          echo "Port: ${PORT}"
+
+      - name: Build and push → ECR (linux/arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context:    spring-petclinic-microservices
+          file:       spring-petclinic-microservices/docker/Dockerfile
+          platforms:  linux/arm64
+          push:       true
+          tags:       ${{ env.ECR_REGISTRY }}/${{ env.ECR_NAMESPACE }}/${{ matrix.service }}:${{ needs.detect.outputs.tag }}
+          build-args: |
+            ARTIFACT_NAME=${{ steps.meta.outputs.artifact_name }}
+            EXPOSED_PORT=${{ steps.meta.outputs.port }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to:   type=gha,scope=${{ matrix.service }},mode=max
+
+      - name: Verify image in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name ${{ env.ECR_NAMESPACE }}/${{ matrix.service }} \
+            --image-ids imageTag=${{ needs.detect.outputs.tag }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageDetails[0].imageDigest' \
+            --output text
+
+  # ===========================================================================
+  # update-tags
+  # Runs after ALL matrix build jobs succeed.
+  # Updates image.tag in helm-values/{service}.yaml for every built service,
+  # commits to master. ArgoCD detects the commit and auto-syncs dev.
+  # ===========================================================================
+  update-tags:
+    name: Update Helm image tags → ${{ needs.detect.outputs.tag }}
+    needs: [detect, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          ref: master
+
+      - name: Install yq v4
+        run: |
+          wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.43.1/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
+
+      - name: Update image.tag in helm-values
+        env:
+          TAG:      ${{ needs.detect.outputs.tag }}
+          SERVICES: ${{ needs.detect.outputs.services }}
+        run: |
+          echo "${SERVICES}" | jq -r '.[]' | while read SERVICE; do
+            FILE="helm-values/${SERVICE}.yaml"
+            if [[ ! -f "${FILE}" ]]; then
+              echo "::error::Values file not found: ${FILE}"
+              exit 1
+            fi
+            yq -i ".image.tag = \"${TAG}\"" "${FILE}"
+            WRITTEN=$(yq '.image.tag' "${FILE}")
+            echo "✓ ${FILE} → image.tag: ${WRITTEN}"
+          done
+
+      - name: Commit and push
+        env:
+          TAG:      ${{ needs.detect.outputs.tag }}
+          SERVICES: ${{ needs.detect.outputs.services }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm-values/
+          if git diff --staged --quiet; then
+            echo "Tags already at ${TAG} — nothing to commit"
+            exit 0
+          fi
+          SERVICES_LIST=$(echo "${SERVICES}" | jq -r 'join(", ")')
+          git commit -m "ci: update image tags → ${TAG}
+
+          Services: ${SERVICES_LIST}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git push origin master
+          echo "✓ Pushed: ${TAG}"
+
+      - name: Job summary
+        if: always()
+        env:
+          TAG:      ${{ needs.detect.outputs.tag }}
+          SERVICES: ${{ needs.detect.outputs.services }}
+        run: |
+          echo "## Build and Push — \`${TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Image |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "${SERVICES}" | jq -r '.[]' | while read SERVICE; do
+            echo "| \`${SERVICE}\` | \`${{ env.ECR_REGISTRY }}/${{ env.ECR_NAMESPACE }}/${SERVICE}:${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          done
