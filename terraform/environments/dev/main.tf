@@ -95,7 +95,7 @@ module "rds" {
   deletion_protection       = false
   skip_final_snapshot       = true
   final_snapshot_identifier = "${var.project}-${var.environment}-rds-final-snapshot"
-  copy_tags_to_snapshot     = true
+  copy_tags_to_snapshot     = false
 }
 
 module "iam" {
