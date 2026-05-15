@@ -11,6 +11,7 @@ resource "aws_ecr_repository" "service" {
   # petclinic-dev/api-gateway
   name = "${local.environment_prefix}/${each.value}"
 
+  force_delete         = true
   image_tag_mutability = var.image_tag_mutability
 
   image_scanning_configuration {
