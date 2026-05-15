@@ -79,6 +79,40 @@ KARPENTER_NODE_ROLE_ARN=$(terraform output -raw karpenter_node_role_arn)
 KARPENTER_NODE_INSTANCE_PROFILE_ARN=$(terraform output -raw karpenter_node_instance_profile_arn)
 EOF
 
+
+# =============================================================================
+# Fill placeholders in k8s and helm-values files
+# =============================================================================
+echo "Filling placeholders..."
+
+VPC_ID=$(terraform output -raw vpc_id)
+IAM_LB_CONTROLLER_ROLE_ARN=$(terraform output -raw iam_lb_controller_role_arn)
+IAM_ESO_ROLE_ARN=$(terraform output -raw iam_eso_role_arn)
+RDS_SECRET_ARN=$(terraform output -raw rds_secret_arn)
+RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
+
+# ── ALB Controller: vpcId + role ARN ─────────────────────────────────────────
+LB_VALUES="${REPO_ROOT}/k8s/base/aws-load-balancer-controller/helm-values.yaml"
+sed -i "s|^vpcId:.*|vpcId: ${VPC_ID}|" "${LB_VALUES}"
+sed -i "s|eks.amazonaws.com/role-arn:.*|eks.amazonaws.com/role-arn: ${IAM_LB_CONTROLLER_ROLE_ARN}|" "${LB_VALUES}"
+echo "  ✓ ALB controller helm-values.yaml"
+
+# ── ESO helm values: role ARN ─────────────────────────────────────────────────
+ESO_VALUES="${REPO_ROOT}/k8s/base/external-secrets/eso-helm-values.yaml"
+sed -i "s|eks.amazonaws.com/role-arn:.*|eks.amazonaws.com/role-arn: ${IAM_ESO_ROLE_ARN}|" "${ESO_VALUES}"
+echo "  ✓ ESO eso-helm-values.yaml"
+
+# ── ClusterSecretStore: role ARN ──────────────────────────────────────────────
+CSS="${REPO_ROOT}/k8s/base/external-secrets/cluster-secret-store.yaml"
+sed -i "s|eks.amazonaws.com/role-arn:.*|eks.amazonaws.com/role-arn: ${IAM_ESO_ROLE_ARN}|" "${CSS}"
+echo "  ✓ ClusterSecretStore cluster-secret-store.yaml"
+
+# ── ExternalSecret DB: RDS secret ARN + endpoint ─────────────────────────────
+ES_DB="${REPO_ROOT}/k8s/base/external-secrets/externalsecret-db.yaml"
+sed -i "s|key: arn:aws:secretsmanager[^ ]*|key: ${RDS_SECRET_ARN}|" "${ES_DB}"
+sed -i "s|url: "jdbc:mysql://[^"]*"|url: "jdbc:mysql://${RDS_ENDPOINT}:3306/petclinic?useSSL=true\&requireSSL=true\&serverTimezone=UTC\&allowPublicKeyRetrieval=true"|" "${ES_DB}"
+echo "  ✓ ExternalSecret externalsecret-db.yaml"
+
 echo ""
 echo "✓ Written to: ${OUT_FILE}"
 echo ""
