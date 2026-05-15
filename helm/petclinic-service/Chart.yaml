@@ -1,0 +1,19 @@
+apiVersion: v2
+name: petclinic-service
+description: >
+  Generic Helm chart for all Spring PetClinic microservices.
+  Per-service identity, ports, init-container flags, and secret mounts are
+  provided via individual helm-values/{service}.yaml files.
+  Environment sizing (replicas, resources, HPA, PDB) is layered on top via
+  helm-values/{env}.yaml overlays.
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - petclinic
+  - spring-boot
+  - microservices
+  - aws
+  - eks
+maintainers:
+  - name: DMI Group 7

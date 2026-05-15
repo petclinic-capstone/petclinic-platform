@@ -1,0 +1,47 @@
+# =============================================================================
+# app-of-apps-dev.yaml — Parent Application that manages all dev child Apps
+#
+# ArgoCD App-of-Apps pattern:
+#   This Application points to applications/dev/ in the platform repo.
+#   ArgoCD reads every Application CRD in that directory and creates them.
+#   When a child Application CRD is added/removed from the directory,
+#   ArgoCD automatically syncs the app registry (prune: true).
+#
+# Sync policy: automated — CI merges to main → ArgoCD self-heals dev.
+# The parent app itself lives in namespace argocd (not petclinic-dev).
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: petclinic-dev-apps
+  namespace: argocd
+  labels:
+    project: petclinic
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: petclinic
+
+  source:
+    repoURL: https://github.com/petclinic-capstone/petclinic-platform.git
+    targetRevision: HEAD
+    # Points to the directory containing all dev Application CRDs.
+    # NOTE: petclinic-eks-deployment is a git submodule inside petclinic-platform.
+    # ArgoCD must be told to recurse submodules at the Repository level —
+    # run this once when adding the repo:
+    #   argocd repo add https://github.com/petclinic-capstone/petclinic-platform.git \
+    #     --enable-recurse-submodules
+    path: k8s/base/argocd/applications/dev
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd   # child Application CRDs are created in argocd ns
+
+  syncPolicy:
+    automated:
+      prune: true      # removes Application CRDs deleted from Git
+      selfHeal: true   # re-syncs if someone manually edits an Application CRD
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

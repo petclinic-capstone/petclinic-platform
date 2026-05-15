@@ -1,0 +1,18 @@
+# =============================================================================
+# kustomization.yaml — AWS Load Balancer Controller
+#
+# This directory holds the Helm values file for the LB Controller.
+# The controller itself is installed via Helm (bootstrap step), not via
+# ArgoCD, because it must exist before any Ingress resources can be created.
+#
+# Reference: helm-values.yaml
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# No resources here — this directory is a Helm values reference only.
+# The actual install is performed during cluster bootstrap:
+#   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     --namespace kube-system \
+#     --values kubernetes/base/aws-load-balancer-controller/helm-values.yaml
+resources: []

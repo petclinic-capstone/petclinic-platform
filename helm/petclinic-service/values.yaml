@@ -1,0 +1,127 @@
+# =============================================================================
+# Default values for petclinic-service chart.
+# These are the base defaults. Override them with:
+#   helm-values/{service}.yaml  — per-service identity, ports, flags
+#   helm-values/{env}.yaml      — environment sizing (dev / prod)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Service identity (MUST be overridden per service)
+# ---------------------------------------------------------------------------
+service:
+  name: ""          # e.g. "config-server" — drives Deployment name and Service DNS
+  port: 8080        # Kubernetes Service port
+  targetPort: 8080  # Container port (must match Spring server.port)
+
+# ---------------------------------------------------------------------------
+# Image — tag is updated by the CI pipeline on every merge to main
+# ---------------------------------------------------------------------------
+image:
+  repository: ""          # e.g. 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/config-server
+  tag: "latest"           # overridden by CI with SHA-7 (e.g. "a1b2c3d")
+  pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Replica count — overridden by env overlay (dev: 1, prod: 2+)
+# ---------------------------------------------------------------------------
+replicaCount: 1
+
+# ---------------------------------------------------------------------------
+# Resources — overridden by env overlay
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 300m
+    memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Health probes
+# startupProbe: 30 x 10s = 5 min grace before liveness fires (Spring Boot safe)
+# useSimpleHealth: true  → all three probes use /actuator/health  (config-server)
+# useSimpleHealth: false → readiness=/actuator/health/readiness
+#                          liveness =/actuator/health/liveness
+# ---------------------------------------------------------------------------
+probes:
+  useSimpleHealth: false
+  startup:
+    initialDelaySeconds: 10
+    failureThreshold: 30
+    periodSeconds: 10
+  readiness:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+  liveness:
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    failureThreshold: 3
+
+# ---------------------------------------------------------------------------
+# Init containers — enforce startup ordering
+# config-server   : both false (boots first, no dependencies)
+# discovery-server: waitForConfig true, waitForDiscovery false
+# all others      : both true
+# ---------------------------------------------------------------------------
+initContainers:
+  waitForConfig: false
+  waitForDiscovery: false
+  configServerUrl: "http://config-server:8888"
+  discoveryServerUrl: "http://discovery-server:8761"
+
+# ---------------------------------------------------------------------------
+# Secret mounts — ESO writes Kubernetes Secrets; we reference them here
+# dbCredentials: true  → customers-service, visits-service, vets-service
+# openaiKey: true      → genai-service
+# ---------------------------------------------------------------------------
+secrets:
+  dbCredentials: false
+  openaiKey: false
+
+# ---------------------------------------------------------------------------
+# ServiceAccount — created by default; annotated externally for IRSA if needed
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""   # defaults to the release name
+
+# ---------------------------------------------------------------------------
+# HPA — disabled in dev; enabled selectively in prod via env overlay
+# ---------------------------------------------------------------------------
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# PDB — disabled in dev; enabled in prod to guarantee rolling-update safety
+# ---------------------------------------------------------------------------
+pdb:
+  enabled: false
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Additional environment variables (appended to the container env list)
+# ---------------------------------------------------------------------------
+env: []
+# - name: SOME_VAR
+#   value: "some-value"
+
+# ---------------------------------------------------------------------------
+# Spring profiles active in EKS (overrides Dockerfile default of "docker")
+# ---------------------------------------------------------------------------
+springProfiles: "docker,kubernetes"
+
+# ---------------------------------------------------------------------------
+# Node selector — pin all pods to ARM64 Graviton nodes (t4g.small)
+# ---------------------------------------------------------------------------
+nodeSelector:
+  kubernetes.io/arch: arm64
+
+tolerations: []
+affinity: {}

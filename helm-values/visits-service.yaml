@@ -1,0 +1,29 @@
+# =============================================================================
+# visits-service — Manages pet visit / appointment records
+# Port  : 8082
+# DB    : Reads/writes petclinic MySQL schema (RDS via IRSA + ESO)
+# Init  : Full startup ordering — waits for config + discovery.
+# Secret: petclinic-db-credentials (ESO-synced from Secrets Manager)
+# =============================================================================
+
+service:
+  name: visits-service
+  port: 8082
+  targetPort: 8082
+
+image:
+  repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/visits-service
+  tag: "latest"   # overridden by CI pipeline with SHA-7
+
+initContainers:
+  waitForConfig: true
+  waitForDiscovery: true
+
+probes:
+  useSimpleHealth: false
+
+secrets:
+  dbCredentials: true
+  openaiKey: false
+
+springProfiles: "docker,kubernetes"

@@ -1,0 +1,58 @@
+# =============================================================================
+# eso-helm-values.yaml — External Secrets Operator Helm values
+# Chart: external-secrets/external-secrets
+#
+# Why this file exists:
+#   The ESO Helm chart creates a ServiceAccount named "external-secrets" by
+#   default. Our ClusterSecretStore and IAM IRSA trust policy both reference
+#   "external-secrets-sa". Without overriding the SA name here, the IRSA
+#   annotation is applied to the wrong (or missing) ServiceAccount and ESO
+#   cannot authenticate to AWS Secrets Manager.
+#
+# Install command (run once before applying ArgoCD App-of-Apps):
+#   ESO_ROLE_ARN=$(terraform -chdir=terraform/environments/dev output -raw iam_eso_role_arn)
+#
+#   helm repo add external-secrets https://charts.external-secrets.io
+#   helm repo update
+#   helm upgrade --install external-secrets external-secrets/external-secrets \
+#     --namespace external-secrets \
+#     --create-namespace \
+#     --values kubernetes/base/external-secrets/eso-helm-values.yaml \
+#     --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${ESO_ROLE_ARN}"
+#
+# The --set flag at install time injects the live role ARN from Terraform.
+# The rest of the values below are static and version-controlled.
+# =============================================================================
+
+serviceAccount:
+  create: true
+  # Must match the name referenced in:
+  #   - kubernetes/base/external-secrets/cluster-secret-store.yaml (.spec.provider.aws.auth.jwt.serviceAccountRef.name)
+  #   - terraform/modules/iam/main.tf (eso_trust policy condition)
+  name: external-secrets-sa
+  # IRSA annotation is injected at install time via --set (see command above)
+  # so the role ARN does not need to be hardcoded here.
+  annotations: {}
+
+# Keep resource usage low on t4g.small nodes
+resources:
+  requests:
+    cpu:    50m
+    memory: 64Mi
+  limits:
+    cpu:    200m
+    memory: 256Mi
+
+# Webhook and cert-controller use their own ServiceAccounts (not annotated
+# with IRSA) — only the main controller needs AWS access.
+webhook:
+  resources:
+    requests:
+      cpu:    25m
+      memory: 32Mi
+
+certController:
+  resources:
+    requests:
+      cpu:    25m
+      memory: 32Mi

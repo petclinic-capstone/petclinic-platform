@@ -1,0 +1,70 @@
+# =============================================================================
+# api-gateway-ingress.yaml — ALB Ingress for PetClinic api-gateway
+#
+# The AWS Load Balancer Controller watches this Ingress and provisions an
+# internet-facing Application Load Balancer in the public subnets created
+# by TEAM-1 (public_subnet_ids Terraform output).
+#
+# Target type: ip — routes directly to pod IPs (no NodePort overhead).
+# This requires the VPC CNI plugin (installed by default on EKS).
+#
+# The ALB DNS name is available after apply via:
+#   kubectl get ingress petclinic-api-gateway -n petclinic-dev \
+#     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+#
+# TLS termination (Phase pending DNS/ACM):
+#   Once Route53 and ACM are configured by TEAM-1, add:
+#     alb.ingress.kubernetes.io/certificate-arn: <ACM_ARN>
+#     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+#     alb.ingress.kubernetes.io/ssl-redirect: '443'
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: petclinic-api-gateway
+  namespace: petclinic-dev
+  labels:
+    app.kubernetes.io/name: petclinic-api-gateway
+    app.kubernetes.io/part-of: petclinic
+    app.kubernetes.io/managed-by: argocd
+    environment: dev
+  annotations:
+    # ALB scheme: internet-facing — provisioned in public subnets.
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    # Target type: ip — traffic goes directly to pod IPs.
+    alb.ingress.kubernetes.io/target-type: ip
+
+    # Listener: HTTP only at this phase (HTTPS added post-ACM).
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+
+    # Health check — LB polls api-gateway actuator endpoint.
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "10"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+
+    # Subnets: LB Controller auto-discovers public subnets tagged by TEAM-1.
+    # No explicit subnet annotation needed (TEAM-1 tagged subnets for ALB).
+
+    # Tags propagated to the ALB resource.
+    alb.ingress.kubernetes.io/tags: >-
+      Project=petclinic,Environment=dev,ManagedBy=kubernetes
+
+    # Connection idle timeout (default 60s; raised for Spring Boot slow starts).
+    alb.ingress.kubernetes.io/load-balancer-attributes: >-
+      idle_timeout.timeout_seconds=120
+
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  name: http

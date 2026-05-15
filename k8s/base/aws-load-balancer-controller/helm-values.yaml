@@ -1,0 +1,67 @@
+# =============================================================================
+# helm-values.yaml — AWS Load Balancer Controller
+# Chart: eks/aws-load-balancer-controller (https://aws.github.io/eks-charts)
+# Version: 1.7.x  (compatible with EKS 1.33)
+#
+# Install command (bootstrap, before ArgoCD):
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm repo update
+#   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     --namespace kube-system \
+#     --values kubernetes/base/aws-load-balancer-controller/helm-values.yaml
+#
+# Replace REPLACE_WITH_* values with actual Terraform outputs:
+#   terraform -chdir=terraform/environments/dev output -raw vpc_id
+#   terraform -chdir=terraform/environments/dev output -raw iam_lb_controller_role_arn
+# =============================================================================
+
+clusterName: petclinic-dev
+region: us-east-1
+
+# VPC ID — required for target group creation.
+# IMPORTANT: Replace with: terraform output -raw vpc_id
+vpcId: vpc-0a23d06a4a71ceda9
+
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    # IRSA annotation — allows the controller pod to call AWS ELB APIs.
+    # IMPORTANT: Replace with: terraform output -raw iam_lb_controller_role_arn
+    eks.amazonaws.com/role-arn: arn:aws:iam::482352877891:role/petclinic-dev-lb-controller-role
+
+# Use ARM64 image (Graviton t4g.small nodes).
+# The EKS charts repository publishes multi-arch images — the arm64 variant
+# is selected automatically by the node's architecture label.
+# Override only if the chart default tag is too old:
+# image:
+#   tag: v2.7.2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Enable WAFv2 and Shield integration (optional, uncomment for prod hardening).
+# enableWaf: true
+# enableWafv2: true
+# enableShield: true
+
+# Pod anti-affinity — spread controller replicas across nodes.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - aws-load-balancer-controller
+          topologyKey: kubernetes.io/hostname

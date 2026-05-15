@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - config-server.yaml
+  - discovery-server.yaml
+  - api-gateway.yaml
+  - customers-service.yaml
+  - visits-service.yaml
+  - vets-service.yaml
+  - genai-service.yaml
+  - admin-server.yaml

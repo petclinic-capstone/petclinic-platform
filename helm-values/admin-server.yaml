@@ -1,0 +1,30 @@
+# =============================================================================
+# admin-server — Spring Boot Admin (monitors all registered services)
+# Port  : 9090
+# Role  : Connects to Eureka to discover and monitor all microservices.
+#         Provides a management UI — not exposed externally in dev.
+# Init  : Full startup ordering — waits for config + discovery.
+# =============================================================================
+
+service:
+  name: admin-server
+  port: 9090
+  targetPort: 9090
+
+image:
+  repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/admin-server
+  tag: "latest"   # overridden by CI pipeline with SHA-7
+
+initContainers:
+  waitForConfig: true
+  waitForDiscovery: true
+
+probes:
+  useSimpleHealth: false
+
+# No secret mounts required
+secrets:
+  dbCredentials: false
+  openaiKey: false
+
+springProfiles: "docker,kubernetes"

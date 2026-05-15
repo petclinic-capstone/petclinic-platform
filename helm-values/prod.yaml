@@ -1,0 +1,36 @@
+# =============================================================================
+# prod.yaml — Production environment sizing overlay
+#
+# Merged AFTER the per-service values file:
+#   helm install ... -f helm-values/{service}.yaml -f helm-values/prod.yaml
+#
+# Design rationale:
+#   - 2 replicas per service as baseline (HA across 2 AZs: us-east-1a/1b)
+#   - Higher CPU/memory for sustained throughput under real traffic
+#   - HPA enabled: scales 2→6 pods on CPU≥70% or memory≥80%
+#   - PDB enabled: minAvailable:1 prevents simultaneous pod eviction during
+#     rolling updates and node drains (Karpenter consolidation safe)
+# =============================================================================
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi
+
+# HPA — enabled in prod; Karpenter provisions nodes as pods scale out
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# PDB — enforces rolling-update safety; safe with replicaCount≥2
+pdb:
+  enabled: true
+  minAvailable: 1

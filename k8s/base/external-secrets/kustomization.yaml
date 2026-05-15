@@ -1,0 +1,32 @@
+# =============================================================================
+# kustomization.yaml — External Secrets Operator base layer
+#
+# Applied by ArgoCD Application CR (Phase C) targeting this directory.
+# Order matters: namespace must exist before namespaced resources.
+#
+# Apply order (Kustomize respects resource ordering):
+#   1. namespace.yaml            — petclinic-dev namespace
+#   2. cluster-secret-store.yaml — ClusterSecretStore (cluster-scoped)
+#   3. externalsecret-db.yaml    — RDS credentials ExternalSecret
+#   4. externalsecret-openai.yaml — OpenAI key ExternalSecret
+#
+# Pre-requisite (applied by ESO Helm install, managed separately):
+#   - namespace: external-secrets
+#   - ServiceAccount: external-secrets-sa (name override in eso-helm-values.yaml)
+#   - IRSA annotation injected at helm install time (--set serviceAccount.annotations...)
+#   - ESO CRDs: externalsecrets.external-secrets.io, clustersecretstores, etc.
+#
+# Bootstrap command — run once before applying this kustomization:
+#   helm upgrade --install external-secrets external-secrets/external-secrets \
+#     -n external-secrets --create-namespace \
+#     -f kubernetes/base/external-secrets/eso-helm-values.yaml \
+#     --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$(terraform -chdir=terraform/environments/dev output -raw iam_eso_role_arn)"
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - cluster-secret-store.yaml
+  - externalsecret-db.yaml
+  - externalsecret-openai.yaml

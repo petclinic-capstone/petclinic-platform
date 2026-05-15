@@ -1,0 +1,161 @@
+# =============================================================================
+# update-image-tags.yml — CD: update Helm image tags after a successful build
+#
+# Triggered by repository_dispatch from the app repo (build-push.yml Job 3).
+# For every service in the payload, this workflow runs yq to set image.tag
+# in helm-values/{service}.yaml, then commits and pushes to main.
+# ArgoCD detects the new commit and automatically syncs the dev Applications.
+#
+# GitOps loop:
+#   app repo push → build-push.yml → ECR push → repository_dispatch
+#     → THIS WORKFLOW → yq update → git commit → ArgoCD sync → EKS rolling update
+#
+# Payload received (from build-push.yml):
+#   {
+#     "sha":      "abc1234defgh...",
+#     "tag":      "abc1234",          ← SHA-7
+#     "services": ["api-gateway","vets-service"],
+#     "branch":   "main",
+#     "run_id":   "12345678",
+#     "run_url":  "https://github.com/..."
+#   }
+#
+# Required secrets: none beyond GITHUB_TOKEN (workflow writes to its own repo)
+# Required permissions: contents: write (to push the tag update commit)
+# =============================================================================
+
+name: Update Image Tags
+
+on:
+  repository_dispatch:
+    types:
+      - app-image-built
+
+permissions:
+  contents: write   # allows git push to platform repo main branch
+
+jobs:
+
+  # ===========================================================================
+  # update-tags
+  # Iterates over the services array from the dispatch payload and updates
+  # image.tag in each service's helm-values YAML file using yq (mikefarah v4).
+  # Commits all changes in a single atomic commit referencing the source SHA.
+  # ===========================================================================
+  update-tags:
+    name: Update image tags → ${{ github.event.client_payload.tag }}
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── Checkout platform repo ───────────────────────────────────────────────
+      # submodules: recursive — required because petclinic-eks-deployment is a
+      # git submodule inside this repo. Without this flag the helm-values/
+      # directory would be missing and yq would fail with "file not found".
+      - name: Checkout platform repo
+        uses: actions/checkout@v4
+        with:
+          # Use GITHUB_TOKEN — sufficient for pushing to this same repo.
+          token: ${{ github.token }}
+          ref: main
+          submodules: recursive
+
+      # ── Install yq (mikefarah v4) ────────────────────────────────────────────
+      # yq v4 uses a different syntax from v3 (kislyuk/yq).
+      # We pin to a release tag for reproducibility.
+      - name: Install yq v4
+        run: |
+          YQ_VERSION="v4.43.1"
+          wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          chmod +x /usr/local/bin/yq
+          yq --version
+
+      # ── Update image.tag in helm-values/{service}.yaml ───────────────────────
+      # Reads the services JSON array from the dispatch payload and iterates.
+      # Each service gets its image.tag set to the SHA-7 from the payload.
+      - name: Update image tags with yq
+        env:
+          TAG:      ${{ github.event.client_payload.tag }}
+          SERVICES: ${{ toJson(github.event.client_payload.services) }}
+          SHA:      ${{ github.event.client_payload.sha }}
+        run: |
+          echo "Image tag  : ${TAG}"
+          echo "Source SHA : ${SHA}"
+          echo "Services   : ${SERVICES}"
+          echo ""
+
+          # Parse the JSON array and iterate
+          echo "${SERVICES}" | jq -r '.[]' | while read -r SERVICE; do
+            VALUES_FILE="helm-values/${SERVICE}.yaml"
+
+            if [[ ! -f "${VALUES_FILE}" ]]; then
+              echo "::error::Values file not found: ${VALUES_FILE}"
+              exit 1
+            fi
+
+            echo "Updating ${VALUES_FILE} → image.tag: ${TAG}"
+            yq -i ".image.tag = \"${TAG}\"" "${VALUES_FILE}"
+
+            # Verify the write was applied correctly
+            WRITTEN=$(yq '.image.tag' "${VALUES_FILE}")
+            if [[ "${WRITTEN}" != "${TAG}" ]]; then
+              echo "::error::yq write verification failed for ${SERVICE}: expected ${TAG}, got ${WRITTEN}"
+              exit 1
+            fi
+            echo "  ✓ Verified: image.tag = ${WRITTEN}"
+          done
+
+      # ── Show diff before committing ───────────────────────────────────────────
+      - name: Show diff
+        run: git diff helm-values/
+
+      # ── Commit and push ───────────────────────────────────────────────────────
+      # Only commits if there are actual changes (idempotent — safe to re-run).
+      - name: Commit and push updated tags
+        env:
+          TAG:      ${{ github.event.client_payload.tag }}
+          SERVICES: ${{ toJson(github.event.client_payload.services) }}
+          SHA:      ${{ github.event.client_payload.sha }}
+          RUN_URL:  ${{ github.event.client_payload.run_url }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add helm-values/
+
+          # Only commit if something changed (handles duplicate dispatches)
+          if git diff --staged --quiet; then
+            echo "No changes to commit — image tags already at ${TAG}"
+            exit 0
+          fi
+
+          # Build a readable service list for the commit message
+          SERVICES_LIST=$(echo "${SERVICES}" | jq -r 'join(", ")')
+
+          git commit -m "ci: update image tags → ${TAG}
+
+          Services updated: ${SERVICES_LIST}
+          Source commit   : ${SHA}
+          CI run          : ${RUN_URL}"
+
+          git push origin main
+          echo "✓ Committed and pushed tag update for: ${SERVICES_LIST}"
+
+      # ── Job summary ──────────────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        env:
+          TAG:      ${{ github.event.client_payload.tag }}
+          SERVICES: ${{ toJson(github.event.client_payload.services) }}
+          SHA:      ${{ github.event.client_payload.sha }}
+        run: |
+          echo "## 🏷️ Image Tag Update" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${TAG}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Source SHA | \`${SHA}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Services | \`$(echo ${SERVICES} | jq -r 'join(", ")')\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_ArgoCD will detect this commit and auto-sync the dev Applications._" >> $GITHUB_STEP_SUMMARY

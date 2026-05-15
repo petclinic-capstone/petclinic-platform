@@ -1,0 +1,19 @@
+project_name = "petclinic"
+environment  = "dev"
+aws_region   = "us-east-1"
+
+# GitHub — App CI role (ECR push)
+# Trusts repos that run build-push.yml. Secret name: AWS_ROLE_ARN
+# Each entry is a full "org/repo" path — supports multiple GitHub orgs.
+github_org  = "petclinic-project"   # kept for reference; condition uses github_repo entries directly
+github_repo = [
+  "petclinic-project/spring-petclinic-microservices",  # real app repo
+  # "lua-cloud03/spring-petclinic-microservices",       # TEAM-1 lead test fork (uncomment for testing)
+]
+github_branch = "main"
+
+# GitHub — Terraform CI role (terraform plan/apply)
+# Trusts repos that run terraform-ci.yml. Secret name: TF_ROLE_ARN
+github_tf_repos = [
+  "petclinic-project/petclinic-platform",
+]

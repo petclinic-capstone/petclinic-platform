@@ -1,0 +1,32 @@
+# =============================================================================
+# discovery-server — Netflix Eureka Service Registry
+# Port  : 8761
+# Role  : Boots second; all microservices register here.
+# Init  : Waits for config-server only (discovery-server itself is the
+#         second link in the startup chain).
+# =============================================================================
+
+service:
+  name: discovery-server
+  port: 8761
+  targetPort: 8761
+
+image:
+  repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/discovery-server
+  tag: "latest"   # overridden by CI pipeline with SHA-7
+
+# Wait for config-server; discovery-server itself has no Eureka dependency
+initContainers:
+  waitForConfig: true
+  waitForDiscovery: false
+
+# Standard split probes (Spring Boot 2.3+ actuator endpoints present)
+probes:
+  useSimpleHealth: false
+
+# No secret mounts required
+secrets:
+  dbCredentials: false
+  openaiKey: false
+
+springProfiles: "docker,kubernetes"

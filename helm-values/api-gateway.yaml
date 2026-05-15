@@ -1,0 +1,31 @@
+# =============================================================================
+# api-gateway — Spring Cloud Gateway (public entry point)
+# Port  : 8080
+# Role  : Routes external traffic to backend microservices.
+#         Exposed via ALB Ingress (configured in Phase C).
+# Init  : Waits for both config-server and discovery-server.
+# =============================================================================
+
+service:
+  name: api-gateway
+  port: 8080
+  targetPort: 8080
+
+image:
+  repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/api-gateway
+  tag: "latest"   # overridden by CI pipeline with SHA-7
+
+# Full startup ordering: config-server → discovery-server → api-gateway
+initContainers:
+  waitForConfig: true
+  waitForDiscovery: true
+
+probes:
+  useSimpleHealth: false
+
+# No secret mounts required
+secrets:
+  dbCredentials: false
+  openaiKey: false
+
+springProfiles: "docker,kubernetes"

@@ -1,0 +1,254 @@
+# =============================================================================
+# terraform-ci.yml — Infrastructure CI/CD gate for Terraform changes
+#
+# On pull_request → main : runs fmt check, init, validate, plan
+#                          posts the plan output as a PR comment
+# On push → main         : runs apply -auto-approve
+#
+# Only triggered when files under terraform/ change (path filter).
+# Uses OIDC keyless auth — same AWS role as the app CI pipeline.
+#
+# Required secrets:
+#   AWS_ROLE_ARN   — iam_github_actions_role_arn (terraform output from TEAM-1)
+#
+# Required permissions:
+#   id-token: write      — OIDC token for AWS auth
+#   contents: read       — checkout
+#   pull-requests: write — post plan comment on PR
+# =============================================================================
+
+name: Terraform CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write   # allows posting plan as PR comment
+
+env:
+  AWS_REGION:   us-east-1
+  TF_DIR:       terraform/environments/dev
+  TF_VERSION:   "1.8.5"
+  # Terraform backend — matches TEAM-1 backend config
+  TF_STATE_BUCKET: petclinic-terraform-state-482352877891
+  TF_LOCK_TABLE:   petclinic-terraform-locks
+  TF_STATE_KEY:    petclinic/dev/terraform.tfstate
+
+jobs:
+
+  # ===========================================================================
+  # terraform
+  # Single job that branches on event type:
+  #   pull_request → fmt + init + validate + plan + PR comment
+  #   push → main  → fmt + init + validate + apply
+  #
+  # Both paths share the OIDC auth, setup, and validation steps.
+  # ===========================================================================
+  terraform:
+    name: "Terraform ${{ github.event_name == 'pull_request' && 'Plan' || 'Apply' }}"
+    runs-on: ubuntu-latest
+    # Prevent concurrent runs against the same state file.
+    concurrency:
+      group: terraform-${{ github.ref }}
+      cancel-in-progress: false   # never cancel an in-flight apply
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_DIR }}
+
+    steps:
+
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── AWS authentication (OIDC) ─────────────────────────────────────────────
+      # Same role used by the app CI pipeline. TEAM-1 Terraform IAM module
+      # grants this role the permissions needed for Terraform operations:
+      # EC2, EKS, ECR, RDS, IAM (for role creation), S3, DynamoDB.
+      # TF_ROLE_ARN is the Terraform CI role — separate from AWS_ROLE_ARN (ECR push).
+      # terraform output -raw iam_github_actions_tf_role_arn
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.TF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: terraform-ci-${{ github.run_id }}
+
+      # ── Terraform setup ───────────────────────────────────────────────────────
+      - name: Setup Terraform ${{ env.TF_VERSION }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          # Wrap terraform output so the plan step captures it in ${{ steps.plan.outputs.stdout }}
+          terraform_wrapper: true
+
+      # ── Format check ─────────────────────────────────────────────────────────
+      # Enforces consistent formatting across all .tf files.
+      # Fails fast — no point running plan if the code isn't formatted.
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive -diff
+        continue-on-error: false
+
+      # ── Init ─────────────────────────────────────────────────────────────────
+      # Initialises the S3 backend and downloads providers.
+      # Backend config matches TEAM-1's terraform/environments/dev/backend.tf.
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true" \
+            -input=false
+
+      # ── Validate ──────────────────────────────────────────────────────────────
+      # Checks syntax and internal consistency without touching state or AWS.
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      # ── Plan (PR only) ────────────────────────────────────────────────────────
+      # Generates an execution plan and saves it to tfplan binary.
+      # Output is captured for the PR comment step.
+      # continue-on-error: true so the comment step always runs even on plan error.
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request'
+        id: plan
+        run: |
+          terraform plan \
+            -no-color \
+            -input=false \
+            -out=tfplan \
+            2>&1 | tee /tmp/plan-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # ── Post plan as PR comment ───────────────────────────────────────────────
+      # Reads the plan output file, truncates if over 50k chars (GitHub limit),
+      # and posts/updates a comment on the PR with formatted plan output.
+      - name: Post Plan comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Read plan output
+            let planOutput = '';
+            try {
+              planOutput = fs.readFileSync('/tmp/plan-output.txt', 'utf8');
+            } catch (e) {
+              planOutput = 'Plan output not available.';
+            }
+
+            // Truncate to stay within GitHub comment limits (65535 chars)
+            const MAX_LEN = 50000;
+            const truncated = planOutput.length > MAX_LEN
+              ? planOutput.substring(0, MAX_LEN) + '\n\n...[output truncated — see full run for details]'
+              : planOutput;
+
+            const planStatus = '${{ steps.plan.outputs.exit_code }}' === '0'
+              ? '✅ Plan succeeded'
+              : '❌ Plan failed';
+
+            const body = [
+              `## Terraform Plan — \`${process.env.TF_DIR}\``,
+              '',
+              `**${planStatus}**`,
+              '',
+              '<details>',
+              '<summary>Show plan output</summary>',
+              '',
+              '```hcl',
+              truncated,
+              '```',
+              '',
+              '</details>',
+              '',
+              `*Workflow: \`${{ github.workflow }}\` · Run: [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*`,
+            ].join('\n');
+
+            // Find existing plan comment to update (avoids comment spam on re-runs)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existingComment = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('Terraform Plan')
+            );
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      # ── Fail job if plan failed ───────────────────────────────────────────────
+      - name: Fail if plan failed
+        if: github.event_name == 'pull_request' && steps.plan.outputs.exit_code != '0'
+        run: |
+          echo "::error::Terraform plan failed — see plan output in PR comment."
+          exit 1
+
+      # ── Apply (push to main only) ─────────────────────────────────────────────
+      # Applies the plan generated in the same run. Only runs on push to main
+      # (i.e., after the PR has been reviewed and merged).
+      # -auto-approve is safe here because:
+      #   1. The plan was already reviewed on the PR
+      #   2. State locking (DynamoDB) prevents concurrent applies
+      #   3. concurrency: group above prevents parallel runs
+      - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          terraform apply \
+            -auto-approve \
+            -no-color \
+            -input=false
+
+      # ── Job summary ───────────────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          EVENT="${{ github.event_name }}"
+          if [[ "${EVENT}" == "pull_request" ]]; then
+            ACTION="Plan"
+          else
+            ACTION="Apply"
+          fi
+          echo "## Terraform ${ACTION} — \`${{ env.TF_DIR }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Format | ${{ steps.fmt.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Init | ${{ steps.init.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate | ${{ steps.validate.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Plan | ${{ steps.plan.outcome || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY

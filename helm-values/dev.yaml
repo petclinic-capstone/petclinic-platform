@@ -1,0 +1,30 @@
+# =============================================================================
+# dev.yaml — Development environment sizing overlay
+#
+# Merged AFTER the per-service values file:
+#   helm install ... -f helm-values/{service}.yaml -f helm-values/dev.yaml
+#
+# Design rationale:
+#   - Single replica per service (minimal cost on t4g.small Graviton nodes)
+#   - Reduced CPU/memory limits (ARM64 JVM is efficient; 300m/512Mi covers warmup)
+#   - HPA disabled (node count is fixed at 2 in dev; Karpenter not active yet)
+#   - PDB disabled (single replica makes minAvailable:1 impossible with PDB)
+# =============================================================================
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 300m
+    memory: 512Mi
+
+# HPA — disabled in dev (no autoscaling needed; fixed 2-node cluster)
+hpa:
+  enabled: false
+
+# PDB — disabled in dev (single replica cannot satisfy minAvailable: 1)
+pdb:
+  enabled: false

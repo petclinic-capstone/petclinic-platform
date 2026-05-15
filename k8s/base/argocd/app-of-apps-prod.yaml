@@ -1,0 +1,44 @@
+# =============================================================================
+# app-of-apps-prod.yaml — Parent Application that manages all prod child Apps
+#
+# Sync policy: NO automated block — prod requires manual approval.
+# A team member reviews the ArgoCD diff and clicks "Sync" in the UI
+# (or runs: argocd app sync petclinic-prod-{service})
+#
+# The parent itself IS auto-synced so new services added to applications/prod/
+# appear in the ArgoCD UI automatically — they just won't sync until approved.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: petclinic-prod-apps
+  namespace: argocd
+  labels:
+    project: petclinic
+    environment: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: petclinic
+
+  source:
+    repoURL: https://github.com/petclinic-capstone/petclinic-platform.git
+    targetRevision: HEAD
+    # See app-of-apps-dev.yaml for the submodule note —
+    # argocd repo add ... --enable-recurse-submodules is required once.
+    path: k8s/base/argocd/applications/prod
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    # Parent syncs automatically so the prod application list stays current.
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    # Note: individual prod Application CRDs have NO automated block —
+    # they require manual sync per service.

@@ -1,0 +1,19 @@
+# =============================================================================
+# namespace.yaml — petclinic-dev application namespace
+#
+# This namespace hosts all PetClinic application workloads:
+#   - Helm-rendered Deployments, Services, ServiceAccounts
+#   - Kubernetes Secrets written by External Secrets Operator (ESO)
+#   - ArgoCD-managed Application releases (Phase C)
+#
+# The external-secrets namespace (where the ESO controller runs) is
+# provisioned separately by the ESO Helm install and is NOT defined here.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: petclinic-dev
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    environment: dev
+    project: petclinic

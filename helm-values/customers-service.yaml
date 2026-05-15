@@ -1,0 +1,30 @@
+# =============================================================================
+# customers-service — Manages pet owner / customer records
+# Port  : 8081
+# DB    : Reads/writes petclinic MySQL schema (RDS via IRSA + ESO)
+# Init  : Full startup ordering — waits for config + discovery.
+# Secret: petclinic-db-credentials (ESO-synced from Secrets Manager)
+# =============================================================================
+
+service:
+  name: customers-service
+  port: 8081
+  targetPort: 8081
+
+image:
+  repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/customers-service
+  tag: "latest"   # overridden by CI pipeline with SHA-7
+
+initContainers:
+  waitForConfig: true
+  waitForDiscovery: true
+
+probes:
+  useSimpleHealth: false
+
+# Injects SPRING_DATASOURCE_USERNAME / PASSWORD / URL from ESO-synced secret
+secrets:
+  dbCredentials: true
+  openaiKey: false
+
+springProfiles: "docker,kubernetes"

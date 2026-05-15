@@ -1,0 +1,63 @@
+# =============================================================================
+# project.yaml — ArgoCD AppProject: petclinic
+#
+# Scopes all PetClinic Application CRDs to this project.
+# Restricts source repos, destination clusters, and allowed resource kinds.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: petclinic
+  namespace: argocd
+  labels:
+    project: petclinic
+spec:
+  description: "PetClinic microservices — dev and prod environments"
+
+  # Only the platform repo may be used as source.
+  # IMPORTANT: Replace with the actual GitHub org/repo URL.
+  sourceRepos:
+    - "https://github.com/petclinic-capstone/petclinic-platform.git"
+    - "https://aws.github.io/eks-charts"   # LB Controller Helm chart repo
+
+  # Application CRDs may deploy only to these namespaces on the in-cluster API.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: petclinic-dev
+    - server: https://kubernetes.default.svc
+      namespace: petclinic-prod
+    - server: https://kubernetes.default.svc
+      namespace: argocd        # app-of-apps children land here
+
+  # Cluster-scoped resources allowed (Namespace must be listed explicitly).
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: external-secrets.io
+      kind: ClusterSecretStore
+
+  # Namespace-scoped resources — standard Spring Boot / K8s set.
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: argoproj.io
+      kind: Application
+
+  # Sync windows: allow all syncs (override per env if needed later).
+  syncWindows: []
