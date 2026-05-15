@@ -21,9 +21,14 @@ resources:
     cpu: 300m
     memory: 512Mi
 
-# HPA — disabled in dev (no autoscaling needed; fixed 2-node cluster)
+# HPA — enabled for stress test / HPA demo; lower CPU threshold fires quickly
+# on existing 2-node capacity — Karpenter not required for this to work.
 hpa:
-  enabled: false
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 50
+  targetMemoryUtilizationPercentage: 80
 
 # PDB — disabled in dev (single replica cannot satisfy minAvailable: 1)
 pdb:

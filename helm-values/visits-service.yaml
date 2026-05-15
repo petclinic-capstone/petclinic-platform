@@ -27,3 +27,16 @@ secrets:
   openaiKey: false
 
 springProfiles: "docker,kubernetes"
+
+
+# Schema initialisation — activates MySQL scripts already bundled in the JAR
+# Spring Boot defaults to mode=embedded (skips non-embedded DBs). Setting
+# mode=always forces schema + data SQL to run against RDS on startup.
+# CREATE TABLE IF NOT EXISTS makes this idempotent.
+env:
+  - name: SPRING_SQL_INIT_MODE
+    value: "always"
+  - name: SPRING_SQL_INIT_SCHEMA_LOCATIONS
+    value: "classpath*:db/mysql/schema.sql"
+  - name: SPRING_SQL_INIT_DATA_LOCATIONS
+    value: "classpath*:db/mysql/data.sql"
