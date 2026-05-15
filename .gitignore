@@ -20,3 +20,11 @@ gradle-app.setting
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
 infra-live-outputs.txt
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+**/tfplan
+**/terraform.tfvars
+*.tfstate
+*.tfstate.backup
