@@ -14,7 +14,6 @@ locals {
     "arn:aws:iam::482352877891:user/dmi-deploy-user01",
     "arn:aws:iam::482352877891:user/dmi-deploy-user02",
     "arn:aws:iam::482352877891:user/dmi-petclinic-infra-pratyush",
-    "arn:aws:iam::482352877891:user/paulProduction",
     "arn:aws:iam::482352877891:user/petclinic-infra-Aarti",
     "arn:aws:iam::482352877891:user/petclinic-infra-cicd-ntando",
     "arn:aws:iam::482352877891:user/petclinic-infra-paul",
