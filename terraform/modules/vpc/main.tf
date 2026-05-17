@@ -1,3 +1,85 @@
+# =============================================================================
+# Pre-destroy cleanup — removes resources created by the AWS Load Balancer
+# Controller that Terraform does not manage (ELBs, k8s-elb-* security groups,
+# orphaned ENIs). Without this, terraform destroy fails with DependencyViolation
+# on the VPC because those resources still reference the VPC subnets/IGW.
+# =============================================================================
+resource "null_resource" "vpc_pre_destroy_cleanup" {
+  triggers = {
+    vpc_cidr     = var.vpc_cidr
+    cluster_name = var.cluster_name
+    region       = var.region
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set +e
+      REGION="${self.triggers.region}"
+      CLUSTER="${self.triggers.cluster_name}"
+
+      echo "[pre-destroy] Finding VPC by cluster tag..."
+      VPC_ID=$(aws ec2 describe-vpcs --region "$REGION" \
+        --filters "Name=tag:Name,Values=$CLUSTER-*-vpc" \
+        --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
+
+      if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+        echo "[pre-destroy] No VPC found, skipping cleanup."
+        exit 0
+      fi
+
+      echo "[pre-destroy] VPC: $VPC_ID — cleaning up LB-controller resources..."
+
+      # Delete classic ELBs
+      for lb in $(aws elb describe-load-balancers --region "$REGION" \
+        --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].LoadBalancerName" \
+        --output text 2>/dev/null); do
+        echo "[pre-destroy] Deleting ELB: $lb"
+        aws elb delete-load-balancer --region "$REGION" --load-balancer-name "$lb" || true
+      done
+
+      # Delete ALBs / NLBs
+      for arn in $(aws elbv2 describe-load-balancers --region "$REGION" \
+        --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" \
+        --output text 2>/dev/null); do
+        echo "[pre-destroy] Deleting ALB/NLB: $arn"
+        aws elbv2 delete-load-balancer --region "$REGION" --load-balancer-arn "$arn" || true
+      done
+
+      sleep 25
+
+      # Delete orphaned k8s-managed security groups
+      for sg in $(aws ec2 describe-security-groups --region "$REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "SecurityGroups[?starts_with(GroupName,'k8s-elb-') || starts_with(GroupName,'k8s-sg-')].GroupId" \
+        --output text 2>/dev/null); do
+        echo "[pre-destroy] Deleting SG: $sg"
+        aws ec2 delete-security-group --region "$REGION" --group-id "$sg" || true
+      done
+
+      # Clean up orphaned ENIs
+      for eni in $(aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+        ATTACH_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+          --network-interface-ids "$eni" \
+          --query 'NetworkInterfaces[0].Attachment.AttachmentId' \
+          --output text 2>/dev/null || echo "None")
+        if [ "$ATTACH_ID" != "None" ] && [ -n "$ATTACH_ID" ]; then
+          aws ec2 detach-network-interface --region "$REGION" \
+            --attachment-id "$ATTACH_ID" --force || true
+          sleep 3
+        fi
+        aws ec2 delete-network-interface --region "$REGION" \
+          --network-interface-id "$eni" || true
+      done
+
+      echo "[pre-destroy] Cleanup complete."
+    EOT
+  }
+}
+
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -180,11 +262,19 @@ resource "aws_security_group" "alb" {
   }
 
   egress {
-    description = "Allow all outbound traffic from ALB"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "Forward traffic to EKS nodes on NodePort range"
+    from_port       = 30000
+    to_port         = 32767
+    protocol        = "tcp"
+    security_groups = [aws_security_group.eks_node.id]
+  }
+
+  egress {
+    description     = "Forward traffic to API gateway pod on port 8080"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.eks_node.id]
   }
 
   tags = {

@@ -27,3 +27,9 @@ variable "cluster_name" {
   description = "EKS cluster name used for Kubernetes subnet discovery tags"
   type        = string
 }
+
+variable "region" {
+  description = "AWS region — used by the pre-destroy cleanup script"
+  type        = string
+  default     = "us-east-1"
+}
