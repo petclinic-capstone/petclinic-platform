@@ -48,6 +48,9 @@ resource "aws_eks_cluster" "this" {
   tags = {
     Name = var.cluster_name
   }
+  lifecycle {
+    ignore_changes = [bootstrap_self_managed_addons]
+  } 
 }
 
 resource "aws_iam_role" "node" {

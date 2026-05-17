@@ -28,3 +28,4 @@ infra-live-outputs.txt
 **/terraform.tfvars
 *.tfstate
 *.tfstate.backup
+tfplan.bin

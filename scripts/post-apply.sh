@@ -110,7 +110,7 @@ echo "  ✓ ClusterSecretStore cluster-secret-store.yaml"
 # ── ExternalSecret DB: RDS secret ARN + endpoint ─────────────────────────────
 ES_DB="${REPO_ROOT}/k8s/base/external-secrets/externalsecret-db.yaml"
 sed -i "s|key: arn:aws:secretsmanager[^ ]*|key: ${RDS_SECRET_ARN}|" "${ES_DB}"
-sed -i "s|url: "jdbc:mysql://[^"]*"|url: "jdbc:mysql://${RDS_ENDPOINT}:3306/petclinic?useSSL=true\&requireSSL=true\&serverTimezone=UTC\&allowPublicKeyRetrieval=true"|" "${ES_DB}"
+sed -i "s|url: \"jdbc:mysql://[^\"]*\"|url: \"jdbc:mysql://${RDS_ENDPOINT}:3306/petclinic?useSSL=true\&requireSSL=true\&serverTimezone=UTC\&allowPublicKeyRetrieval=true\"|" "${ES_DB}"
 echo "  ✓ ExternalSecret externalsecret-db.yaml"
 
 echo ""
@@ -118,3 +118,4 @@ echo "✓ Written to: ${OUT_FILE}"
 echo ""
 echo "Key values:"
 grep -E "^(IAM_GITHUB_ACTIONS_ROLE_ARN|IAM_GITHUB_ACTIONS_TF_ROLE_ARN|RDS_SECRET_ARN|RDS_ENDPOINT|EKS_CLUSTER_NAME|ECR_ENVIRONMENT_PREFIX)=" "${OUT_FILE}"
+
