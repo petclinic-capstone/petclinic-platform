@@ -36,3 +36,8 @@ variable "github_tf_repos" {
   description = "List of GitHub repositories in 'org/repo' format allowed to assume the Terraform CI role"
   type        = list(string)
 }
+
+variable "domain_name" {
+  description = "Root domain for the existing Route53 hosted zone (e.g. demo.lulamistack.co)"
+  type        = string
+}

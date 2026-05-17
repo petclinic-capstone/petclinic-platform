@@ -1,5 +1,6 @@
 data "aws_caller_identity" "current" {}
 
+# ── VPC ───────────────────────────────────────────────────────────────────────
 module "vpc" {
   source = "../../modules/vpc"
 
@@ -9,17 +10,11 @@ module "vpc" {
 
   vpc_cidr = "10.0.0.0/16"
 
-  availability_zones = [
-    "us-east-1a",
-    "us-east-1b"
-  ]
-
-  public_subnet_cidrs = [
-    "10.0.1.0/24",
-    "10.0.2.0/24"
-  ]
+  availability_zones  = ["us-east-1a", "us-east-1b"]
+  public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
+# ── EKS ───────────────────────────────────────────────────────────────────────
 module "eks" {
   source = "../../modules/eks"
 
@@ -29,8 +24,7 @@ module "eks" {
 
   cluster_version = "1.33"
 
-  subnet_ids = module.vpc.public_subnet_ids
-
+  subnet_ids                = module.vpc.public_subnet_ids
   cluster_security_group_id = module.vpc.eks_cluster_security_group_id
   node_security_group_id    = module.vpc.eks_node_security_group_id
 
@@ -44,6 +38,7 @@ module "eks" {
   node_max_size     = 4
 }
 
+# ── ECR ───────────────────────────────────────────────────────────────────────
 module "ecr" {
   source = "../../modules/ecr"
 
@@ -58,46 +53,36 @@ module "ecr" {
     "visits-service",
     "vets-service",
     "genai-service",
-    "admin-server"
+    "admin-server",
   ]
 
   image_tag_mutability          = "MUTABLE"
   scan_on_push                  = true
   untagged_image_retention_days = 7
-  tagged_image_retention_count  = 20
+  tagged_image_retention_count  = 10
 }
 
+# ── RDS ───────────────────────────────────────────────────────────────────────
 module "rds" {
   source = "../../modules/rds"
 
   project     = var.project
   environment = var.environment
 
-  subnet_ids = module.vpc.public_subnet_ids
-
-  security_group_ids = [
-    module.vpc.rds_security_group_id
-  ]
+  subnet_ids         = module.vpc.public_subnet_ids
+  security_group_ids = [module.vpc.rds_security_group_id]
 
   database_name   = "petclinic"
-  master_username = "petclinicadmin"
+  master_username = "petclinic"
 
-  instance_class      = "db.t4g.micro"
-  allocated_storage   = 20
-  storage_type        = "gp3"
-  publicly_accessible = false
-  multi_az            = false
-
-  backup_retention_period = 0
-  backup_window           = "03:00-04:00"
-  maintenance_window      = "sun:04:00-sun:05:00"
-
-  deletion_protection       = false
-  skip_final_snapshot       = true
-  final_snapshot_identifier = "${var.project}-${var.environment}-rds-final-snapshot"
-  copy_tags_to_snapshot     = false
+  instance_class          = "db.t4g.micro"
+  allocated_storage       = 20
+  multi_az                = false
+  backup_retention_period = 7
+  deletion_protection     = false
 }
 
+# ── IAM ───────────────────────────────────────────────────────────────────────
 module "iam" {
   source = "../../modules/iam"
 
@@ -106,18 +91,56 @@ module "iam" {
   aws_account_id = data.aws_caller_identity.current.account_id
   aws_region     = var.aws_region
 
-  # OIDC values from the EKS module — do not hardcode these
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_provider_url = module.eks.oidc_provider_url
 
-  # RDS secret ARN — the exact Secrets Manager secret ESO is allowed to read
   rds_secret_arn = module.rds.master_user_secret_arn
 
-  # App CI repos — trusted to push Docker images to ECR (AWS_ROLE_ARN secret)
-  github_org    = var.github_org
-  github_repo   = var.github_repo
-  github_branch = var.github_branch
-
-  # Platform CI repos — trusted to run terraform plan/apply (TF_ROLE_ARN secret)
+  github_org      = var.github_org
+  github_repo     = var.github_repo
+  github_branch   = var.github_branch
   github_tf_repos = var.github_tf_repos
+}
+
+# ── Observability (CloudWatch) ────────────────────────────────────────────────
+module "observability" {
+  source = "../../modules/observability"
+
+  project      = var.project
+  environment  = var.environment
+  aws_region   = var.aws_region
+  cluster_name = module.eks.cluster_name
+
+  log_retention_days      = 30
+  billing_alert_threshold = 50
+}
+
+# ── DNS / Route53 ─────────────────────────────────────────────────────────────
+module "dns" {
+  source = "../../modules/dns"
+
+  project     = var.project
+  environment = var.environment
+
+  domain_name = var.domain_name
+
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_provider_url = module.eks.oidc_provider_url
+}
+
+# ── Cost Control Lambda ───────────────────────────────────────────────────────
+module "cost_control" {
+  source = "../../modules/cost-control"
+
+  project        = var.project
+  environment    = var.environment
+  aws_region     = var.aws_region
+  aws_account_id = data.aws_caller_identity.current.account_id
+
+  rds_identifier     = module.rds.db_instance_identifier
+  eks_cluster_name   = module.eks.cluster_name
+  eks_nodegroup_name = module.eks.node_group_name
+
+  node_min = 2
+  node_max = 4
 }
