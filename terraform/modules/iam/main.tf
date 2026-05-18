@@ -314,10 +314,22 @@ resource "aws_iam_role_policy_attachment" "ebs_csi" {
 #    No Kubernetes SA - trust is based on GitHub's OIDC identity token
 # =============================================================================
 
-# GitHub OIDC provider already exists in this AWS account - read it, don't recreate it.
-# If you try to create it again Terraform throws EntityAlreadyExists.
-data "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
+# GitHub OIDC provider — managed as a resource so terraform destroy on -target=module.iam
+# does not accidentally delete it. lifecycle.prevent_destroy guards against full destroys.
+# If EntityAlreadyExists on first apply: import with:
+#   terraform import module.iam.aws_iam_openid_connect_provider.github \
+#     arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [
+    "6938fd4d98bab03faadb97b34396831e3780aea1",
+    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
+  ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 data "aws_iam_policy_document" "github_actions_trust" {
@@ -327,7 +339,7 @@ data "aws_iam_policy_document" "github_actions_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
@@ -380,6 +392,7 @@ data "aws_iam_policy_document" "github_actions_permissions" {
       "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload",
       "ecr:PutImage",
+      "ecr:DescribeImages",
     ]
     resources = [
       "arn:aws:ecr:${var.aws_region}:${var.aws_account_id}:repository/${var.project}-${var.environment}/*"
@@ -416,7 +429,7 @@ data "aws_iam_policy_document" "github_actions_tf_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
