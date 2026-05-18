@@ -10,25 +10,18 @@ service:
   name: visits-service
   port: 8082
   targetPort: 8082
-
 image:
   repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/visits-service
-  tag: "latest"   # overridden by CI pipeline with SHA-7
-
+  tag: "6dc934e" # overridden by CI pipeline with SHA-7
 initContainers:
   waitForConfig: true
   waitForDiscovery: true
-
 probes:
   useSimpleHealth: false
-
 secrets:
   dbCredentials: true
   openaiKey: false
-
 springProfiles: "docker,kubernetes"
-
-
 # Schema initialisation — activates MySQL scripts already bundled in the JAR
 # Spring Boot defaults to mode=embedded (skips non-embedded DBs). Setting
 # mode=always forces schema + data SQL to run against RDS on startup.

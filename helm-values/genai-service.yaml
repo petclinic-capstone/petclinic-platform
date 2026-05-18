@@ -11,22 +11,17 @@ service:
   name: genai-service
   port: 8084
   targetPort: 8084
-
 image:
   repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/genai-service
-  tag: "latest"   # overridden by CI pipeline with SHA-7
-
+  tag: "6dc934e" # overridden by CI pipeline with SHA-7
 initContainers:
   waitForConfig: true
   waitForDiscovery: true
-
 probes:
   useSimpleHealth: false
-
 secrets:
   dbCredentials: false
-  openaiKey: true   # OPENAI_API_KEY injected from ESO-synced Secret
-
+  openaiKey: true # OPENAI_API_KEY injected from ESO-synced Secret
 springProfiles: "docker,kubernetes"
 # LiteLLM proxy — routes Spring AI OpenAI calls to Anthropic Claude
 env:

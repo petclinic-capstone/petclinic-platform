@@ -10,25 +10,19 @@ service:
   name: customers-service
   port: 8081
   targetPort: 8081
-
 image:
   repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/customers-service
-  tag: "latest"   # overridden by CI pipeline with SHA-7
-
+  tag: "6dc934e" # overridden by CI pipeline with SHA-7
 initContainers:
   waitForConfig: true
   waitForDiscovery: true
-
 probes:
   useSimpleHealth: false
-
 # Injects SPRING_DATASOURCE_USERNAME / PASSWORD / URL from ESO-synced secret
 secrets:
   dbCredentials: true
   openaiKey: false
-
 springProfiles: "docker,kubernetes"
-
 # Schema initialisation — activates MySQL scripts already bundled in the JAR
 # Spring Boot defaults to mode=embedded (skips non-embedded DBs). Setting
 # mode=always forces schema + data SQL to run against RDS on startup.
@@ -39,4 +33,4 @@ env:
   - name: SPRING_SQL_INIT_SCHEMA_LOCATIONS
     value: "classpath*:db/mysql/schema.sql"
   - name: SPRING_SQL_INIT_DATA_LOCATIONS
-    value: "classpath*:db/mysql/data.sql"  
+    value: "classpath*:db/mysql/data.sql"

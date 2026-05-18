@@ -11,23 +11,18 @@ service:
   name: config-server
   port: 8888
   targetPort: 8888
-
 image:
   repository: 482352877891.dkr.ecr.us-east-1.amazonaws.com/petclinic-dev/config-server
-  tag: "latest"   # overridden by CI pipeline with SHA-7
-
+  tag: "6dc934e" # overridden by CI pipeline with SHA-7
 # No init containers — config-server has no upstream dependencies
 initContainers:
   waitForConfig: false
   waitForDiscovery: false
-
 # Use generic /actuator/health for all three probes (no split endpoints)
 probes:
   useSimpleHealth: true
-
 # No secret mounts required
 secrets:
   dbCredentials: false
   openaiKey: false
-
 springProfiles: "docker,kubernetes"
