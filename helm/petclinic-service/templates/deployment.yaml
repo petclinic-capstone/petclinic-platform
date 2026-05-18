@@ -54,8 +54,8 @@ spec:
             - -c
             - |
               echo "Waiting for config-server at {{ .Values.initContainers.configServerUrl }} ..."
-              until wget -q -O- {{ .Values.initContainers.configServerUrl }}/actuator/health 2>/dev/null \
-                    | grep -q '"status":"UP"'; do
+              until wget -q -O- {{ .Values.initContainers.configServerUrl }}/application/default 2>/dev/null \
+                    | grep -q '"name":"application"'; do
                 echo "  config-server not ready — retrying in 5s"
                 sleep 5
               done
