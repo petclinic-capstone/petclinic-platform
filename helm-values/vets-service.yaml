@@ -1,4 +1,4 @@
-==============================================================================
+# ==============================================================================
 # vets-service — Manages veterinarian records and specialties
 # Port  : 8083
 # DB    : Reads/writes petclinic MySQL schema (RDS via IRSA + ESO)
