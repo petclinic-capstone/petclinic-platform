@@ -1,0 +1,109 @@
+# =============================================================================
+# litellm/deployment.yaml — LiteLLM OpenAI-compatible proxy
+#
+# Runs inside petclinic-dev. Exposes port 4000 as an OpenAI-compatible API.
+# genai-service points SPRING_AI_OPENAI_BASE_URL at http://litellm:4000.
+# LiteLLM maps gpt-4o-mini → claude-3-5-haiku-20241022 via Anthropic API.
+#
+# ANTHROPIC_API_KEY is injected from the claude-api-key K8s secret,
+# which is ESO-synced from petclinic/dev/claude-api-key in Secrets Manager.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: petclinic-dev
+  labels:
+    app: litellm
+    project: petclinic
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: litellm
+  template:
+    metadata:
+      labels:
+        app: litellm
+        project: petclinic
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest
+          imagePullPolicy: Always
+          args:
+            - "--config"
+            - "/app/config.yaml"
+            - "--port"
+            - "4000"
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: claude-api-key
+                  key: api-key
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+      nodeSelector:
+        kubernetes.io/arch: arm64
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: petclinic-dev
+  labels:
+    app: litellm
+    project: petclinic
+    environment: dev
+spec:
+  selector:
+    app: litellm
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+      protocol: TCP
+  type: ClusterIP

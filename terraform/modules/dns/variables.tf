@@ -1,5 +1,5 @@
-variable "project"      { type = string }
-variable "environment"  { type = string }
+variable "project" { type = string }
+variable "environment" { type = string }
 
 variable "domain_name" {
   description = "Root domain for the existing Route53 hosted zone (e.g. demo.lulamistack.com)"

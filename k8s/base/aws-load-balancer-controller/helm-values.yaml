@@ -20,7 +20,7 @@ region: us-east-1
 
 # VPC ID — required for target group creation.
 # IMPORTANT: Replace with: terraform output -raw vpc_id
-vpcId: vpc-089b1db2bde8065e9
+vpcId: vpc-0b0943b285bc6dee3
 
 replicaCount: 2
 

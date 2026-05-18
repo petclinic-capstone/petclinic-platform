@@ -28,3 +28,9 @@ secrets:
   openaiKey: true   # OPENAI_API_KEY injected from ESO-synced Secret
 
 springProfiles: "docker,kubernetes"
+# LiteLLM proxy — routes Spring AI OpenAI calls to Anthropic Claude
+env:
+  - name: SPRING_AI_OPENAI_BASE_URL
+    value: "http://litellm:4000"
+  - name: OPENAI_API_KEY
+    value: "sk-litellm-petclinic"

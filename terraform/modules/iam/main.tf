@@ -75,6 +75,19 @@ data "aws_iam_policy_document" "eso_permissions" {
     # Scoped to the exact RDS secret ARN - not a broad path wildcard
     resources = [var.rds_secret_arn]
   }
+
+  statement {
+    sid    = "ReadAppSecrets"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+    ]
+    # Covers all manually created app secrets: openai-api-key, claude-api-key, etc.
+    resources = [
+      "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:petclinic/*"
+    ]
+  }
 }
 
 # Inline policy - avoids iam:CreatePolicy (blocked by DMI course deny policy)
@@ -301,13 +314,10 @@ resource "aws_iam_role_policy_attachment" "ebs_csi" {
 #    No Kubernetes SA - trust is based on GitHub's OIDC identity token
 # =============================================================================
 
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1",
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
-  ]
+# GitHub OIDC provider already exists in this AWS account - read it, don't recreate it.
+# If you try to create it again Terraform throws EntityAlreadyExists.
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 data "aws_iam_policy_document" "github_actions_trust" {
@@ -317,7 +327,7 @@ data "aws_iam_policy_document" "github_actions_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
@@ -406,7 +416,7 @@ data "aws_iam_policy_document" "github_actions_tf_trust" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {

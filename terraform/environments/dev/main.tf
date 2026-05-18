@@ -28,7 +28,7 @@ module "eks" {
   cluster_security_group_id = module.vpc.eks_cluster_security_group_id
   node_security_group_id    = module.vpc.eks_node_security_group_id
 
-  node_instance_types = ["t4g.small"]
+  node_instance_types = ["t4g.medium"]
   node_ami_type       = "AL2023_ARM_64_STANDARD"
   node_capacity_type  = "ON_DEMAND"
   node_disk_size      = 20

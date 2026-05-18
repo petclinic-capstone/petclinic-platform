@@ -1,5 +1,5 @@
 github_org      = "petclinic-capstone"
-github_repo     = ["petclinic-capstone/spring-petclinic-microservices"]
+github_repo     = ["petclinic-capstone/spring-petclinic-microservices", "petclinic-capstone/petclinic-platform"]
 github_tf_repos = ["petclinic-capstone/petclinic-platform"]
 github_branch   = "master"
 

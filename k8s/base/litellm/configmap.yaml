@@ -1,0 +1,29 @@
+# =============================================================================
+# litellm/configmap.yaml — LiteLLM proxy model routing configuration
+#
+# LiteLLM sits between genai-service (Spring AI OpenAI client) and Anthropic.
+# genai-service requests model: gpt-4o-mini → LiteLLM maps → claude-3-5-haiku
+#
+# Why claude-3-5-haiku?
+#   Fastest and cheapest Claude model — ideal for a demo chatbot.
+#   claude-3-5-sonnet is smarter but slower/more expensive.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: petclinic-dev
+  labels:
+    app: litellm
+    project: petclinic
+    environment: dev
+data:
+  config.yaml: |
+    model_list:
+      - model_name: gpt-4o-mini
+        litellm_params:
+          model: anthropic/claude-3-5-haiku-20241022
+          api_key: os.environ/ANTHROPIC_API_KEY
+
+    general_settings:
+      master_key: sk-litellm-petclinic
